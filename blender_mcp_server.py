@@ -35,9 +35,15 @@ if user_site in sys.path:
     sys.path.remove(user_site)
     print(f"Removed user site-packages from path to avoid conflicts: {user_site}", file=sys.stderr)
 
-# Ensure Blender's site-packages is used
+# Add Blender's site-packages to sys.path
+blender_site_packages = site.getsitepackages()
+for pkg_path in blender_site_packages:
+    if pkg_path not in sys.path:
+        sys.path.insert(0, pkg_path)
+        print(f"Added Blender site-packages: {pkg_path}", file=sys.stderr)
+
 print(f"Using Python: {sys.executable}", file=sys.stderr)
-print(f"sys.path: {sys.path[:3]}...", file=sys.stderr)
+print(f"sys.path (first 5): {sys.path[:5]}", file=sys.stderr)
 
 # Import bpy (Blender Python API)
 try:
