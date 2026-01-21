@@ -33,11 +33,17 @@ MCP 서버를 통해 다음 작업을 수행할 수 있습니다:
 **간단 설치:**
 
 1. 이 리포지토리를 클론하거나 다운로드합니다.
-2. Blender의 Python에 MCP 패키지를 설치합니다:
+
+2. **관리자 권한으로 명령 프롬프트를 실행**하고, Blender의 Python에 필요한 패키지를 설치합니다:
    ```cmd
-   "C:\Program Files\Blender Foundation\Blender 5.0\5.0\python\bin\python.exe" -m pip install mcp
+   "C:\Program Files\Blender Foundation\Blender 5.0\5.0\python\bin\python.exe" -m pip install mcp pywin32
    ```
-3. `start_blender_mcp.bat` 파일을 편집하여 Blender 경로를 확인합니다.
+
+3. **pywin32 설치 후 post-install 스크립트를 실행합니다** (중요!):
+   ```cmd
+   "C:\Program Files\Blender Foundation\Blender 5.0\5.0\python\bin\python.exe" "C:\Program Files\Blender Foundation\Blender 5.0\5.0\python\lib\site-packages\pywin32_postinstall.py" -install
+   ```
+
 4. Claude Desktop 설정 파일(`%APPDATA%\Claude\claude_desktop_config.json`)을 수정합니다:
    ```json
    {
@@ -53,7 +59,10 @@ MCP 서버를 통해 다음 작업을 수행할 수 있습니다:
      }
    }
    ```
+
 5. Claude Desktop을 재시작합니다.
+
+**참고:** 설치 중 문제가 발생하면 [TROUBLESHOOTING_WINDOWS.md](TROUBLESHOOTING_WINDOWS.md)를 참조하세요.
 
 ## 사용 예시
 
