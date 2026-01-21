@@ -28,12 +28,12 @@ from typing import Any
 import logging
 import site
 
-# DO NOT use user site-packages to avoid version conflicts
-# Remove user site-packages from sys.path if it exists
+# Add user site-packages to sys.path
+# This allows Blender to find packages installed with pip install --user
 user_site = site.getusersitepackages()
-if user_site in sys.path:
-    sys.path.remove(user_site)
-    print(f"Removed user site-packages from path to avoid conflicts: {user_site}", file=sys.stderr)
+if user_site not in sys.path:
+    sys.path.insert(0, user_site)
+    print(f"Added user site-packages: {user_site}", file=sys.stderr)
 
 # Add Blender's site-packages to sys.path
 blender_site_packages = site.getsitepackages()
@@ -43,7 +43,7 @@ for pkg_path in blender_site_packages:
         print(f"Added Blender site-packages: {pkg_path}", file=sys.stderr)
 
 print(f"Using Python: {sys.executable}", file=sys.stderr)
-print(f"sys.path (first 5): {sys.path[:5]}", file=sys.stderr)
+print(f"sys.path (first 3): {sys.path[:3]}", file=sys.stderr)
 
 # Import bpy (Blender Python API)
 try:
