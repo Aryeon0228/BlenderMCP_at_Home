@@ -7,23 +7,82 @@ A Model Context Protocol server for controlling Blender 3D software.
 import asyncio
 import json
 import sys
+import os
 from typing import Any
 import logging
+
+# Suppress Blender's stdout messages at the file descriptor level
+# This catches both Python and C-level output from Blender
+_original_stdout_fd = None
+_original_stderr_fd = None
+_saved_stdout_fd = None
+
+def suppress_blender_output():
+    """Suppress Blender's C-level stdout output during initialization."""
+    global _original_stdout_fd, _original_stderr_fd, _saved_stdout_fd
+
+    # Save original stdout file descriptor
+    _original_stdout_fd = sys.stdout.fileno()
+    _saved_stdout_fd = os.dup(_original_stdout_fd)
+
+    # Open devnull
+    if sys.platform == "win32":
+        devnull = os.open("nul", os.O_WRONLY)
+    else:
+        devnull = os.open("/dev/null", os.O_WRONLY)
+
+    # Redirect stdout to devnull at the OS level
+    os.dup2(devnull, _original_stdout_fd)
+    os.close(devnull)
+
+def restore_stdout():
+    """Restore original stdout after Blender initialization."""
+    global _saved_stdout_fd, _original_stdout_fd
+
+    if _saved_stdout_fd is not None and _original_stdout_fd is not None:
+        # Restore stdout
+        os.dup2(_saved_stdout_fd, _original_stdout_fd)
+        os.close(_saved_stdout_fd)
+
+        # Recreate sys.stdout with the restored file descriptor
+        sys.stdout = os.fdopen(_original_stdout_fd, 'w', buffering=1)
+
+# Suppress output before importing bpy
+suppress_blender_output()
 
 try:
     import bpy
     BLENDER_AVAILABLE = True
 except ImportError:
     BLENDER_AVAILABLE = False
+    restore_stdout()
     print("Warning: bpy module not available. This script must be run from within Blender.", file=sys.stderr)
+
+# Restore stdout after bpy import
+restore_stdout()
 
 from mcp.server import Server
 from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
 import mcp.server.stdio
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging to stderr (not stdout, as MCP uses stdout for JSON-RPC)
+logging.basicConfig(
+    level=logging.INFO,
+    stream=sys.stderr,  # Log to stderr instead of stdout
+    format='[%(name)s] %(levelname)s: %(message)s'
+)
 logger = logging.getLogger("blender-mcp")
+
+# Suppress Blender's internal logging to stdout
+if BLENDER_AVAILABLE:
+    # Redirect Blender's logging to stderr
+    import logging as blender_logging
+    for handler in blender_logging.root.handlers[:]:
+        blender_logging.root.removeHandler(handler)
+
+    stderr_handler = blender_logging.StreamHandler(sys.stderr)
+    stderr_handler.setFormatter(blender_logging.Formatter('[Blender] %(levelname)s: %(message)s'))
+    blender_logging.root.addHandler(stderr_handler)
 
 # Initialize MCP server
 app = Server("blender-mcp")
@@ -380,18 +439,36 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
 async def main():
     """Main entry point for the server."""
+    # Ensure stdout is clean for MCP JSON-RPC communication
+    sys.stdout.flush()
+    sys.stderr.flush()
+
     logger.info("Starting Blender MCP Server...")
 
     if not BLENDER_AVAILABLE:
         logger.warning("Blender Python API not available - limited functionality")
 
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await app.run(
-            read_stream,
-            write_stream,
-            app.create_initialization_options()
-        )
+    # Run the MCP server
+    try:
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            await app.run(
+                read_stream,
+                write_stream,
+                app.create_initialization_options()
+            )
+    except Exception as e:
+        logger.error(f"MCP server error: {e}", exc_info=True)
+        raise
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Final check: ensure no buffered output in stdout
+    sys.stdout.flush()
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Shutting down Blender MCP Server...")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        sys.exit(1)
