@@ -10,6 +10,14 @@ import sys
 import os
 from typing import Any
 import logging
+import site
+
+# Add user site-packages to sys.path
+# This allows Blender to find packages installed with pip install --user
+user_site = site.getusersitepackages()
+if user_site not in sys.path:
+    sys.path.insert(0, user_site)
+    print(f"Added user site-packages to path: {user_site}", file=sys.stderr)
 
 # Suppress Blender's stdout messages at the file descriptor level
 # This catches both Python and C-level output from Blender
