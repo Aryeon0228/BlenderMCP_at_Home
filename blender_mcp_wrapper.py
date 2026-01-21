@@ -8,36 +8,82 @@ import sys
 import subprocess
 import os
 import threading
+import select
 
 def filter_output(pipe, target_stream):
-    """Filter Blender's output and only forward valid lines."""
+    """Filter Blender's output and only forward valid JSON-RPC lines."""
     for line in iter(pipe.readline, b''):
-        try:
-            # Try to decode the line
-            decoded = line.decode('utf-8', errors='ignore')
+        if not line:
+            break
 
-            # Skip Blender's startup messages that aren't JSON
+        try:
+            # Try to decode
+            decoded = line.decode('utf-8', errors='ignore').strip()
+
+            # If empty line, skip it
+            if not decoded:
+                continue
+
+            # PRIORITY: Pass through anything that looks like JSON
+            # JSON-RPC messages start with { and are on a single line
+            if decoded.startswith('{'):
+                # This is definitely JSON-RPC, pass it through immediately
+                sys.stderr.write(f"[Wrapper] Passing JSON: {decoded[:100]}...\n")
+                sys.stderr.flush()
+                target_stream.buffer.write(line)
+                target_stream.buffer.flush()
+                continue
+
+            # Skip Blender's startup messages
             skip_patterns = [
                 'Blender',
                 'Read blend:',
                 'Saved session',
                 'Info:',
                 'Warning:',
-                'found bundled python:'
+                'found bundled python:',
+                'Color management',
+                'Read new prefs:',
+                'Switching to fully guarded memory allocator'
             ]
 
             # Check if this line should be skipped
             should_skip = any(pattern in decoded for pattern in skip_patterns)
 
-            # If it looks like JSON (starts with {) or is important, pass it through
-            stripped = decoded.strip()
-            if not should_skip or stripped.startswith('{'):
-                target_stream.buffer.write(line)
-                target_stream.buffer.flush()
-        except Exception:
-            # If there's any error, just pass the line through
-            target_stream.buffer.write(line)
-            target_stream.buffer.flush()
+            if should_skip:
+                # Log what we're filtering
+                sys.stderr.write(f"[Wrapper] Filtered: {decoded}\n")
+                sys.stderr.flush()
+            else:
+                # Unknown content - log it but don't pass through
+                sys.stderr.write(f"[Wrapper] Unknown (not forwarded): {decoded}\n")
+                sys.stderr.flush()
+
+        except Exception as e:
+            # Log errors to stderr
+            sys.stderr.write(f"[Wrapper] Error filtering output: {e}\n")
+            sys.stderr.flush()
+
+def forward_stdin(process):
+    """Forward stdin to the Blender process."""
+    try:
+        while True:
+            # Read from stdin
+            data = sys.stdin.buffer.read(1024)
+            if not data:
+                break
+
+            # Write to process
+            process.stdin.write(data)
+            process.stdin.flush()
+    except (BrokenPipeError, IOError, OSError) as e:
+        sys.stderr.write(f"[Wrapper] stdin closed: {e}\n")
+        sys.stderr.flush()
+    finally:
+        try:
+            process.stdin.close()
+        except:
+            pass
 
 def main():
     """Launch Blender with the MCP server."""
@@ -53,9 +99,14 @@ def main():
 
     # Check if Blender exists
     if not os.path.exists(blender_exe) and sys.platform == "win32":
-        print(f"Error: Blender not found at {blender_exe}", file=sys.stderr)
-        print("Please update the blender_exe path in this wrapper script.", file=sys.stderr)
+        sys.stderr.write(f"Error: Blender not found at {blender_exe}\n")
+        sys.stderr.write("Please update the blender_exe path in this wrapper script.\n")
+        sys.stderr.flush()
         sys.exit(1)
+
+    sys.stderr.write(f"[Wrapper] Starting Blender from {blender_exe}\n")
+    sys.stderr.write(f"[Wrapper] MCP server script: {mcp_server_script}\n")
+    sys.stderr.flush()
 
     # Launch Blender
     try:
@@ -63,40 +114,57 @@ def main():
             [blender_exe, '--background', '--python', mcp_server_script],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            stdin=subprocess.PIPE
+            stdin=subprocess.PIPE,
+            bufsize=0  # Unbuffered
         )
 
-        # Create threads to handle output filtering
+        sys.stderr.write("[Wrapper] Blender process started\n")
+        sys.stderr.flush()
+
+        # Create thread to handle stdin forwarding
+        stdin_thread = threading.Thread(
+            target=forward_stdin,
+            args=(process,),
+            daemon=True
+        )
+        stdin_thread.start()
+
+        # Create thread to handle stdout filtering
         stdout_thread = threading.Thread(
             target=filter_output,
             args=(process.stdout, sys.stdout),
             daemon=True
         )
+        stdout_thread.start()
+
+        # Forward stderr to our stderr
+        def forward_stderr():
+            for line in iter(process.stderr.readline, b''):
+                if line:
+                    sys.stderr.buffer.write(b'[Blender] ' + line)
+                    sys.stderr.buffer.flush()
+
         stderr_thread = threading.Thread(
-            target=lambda: process.stderr.read(),  # Just consume stderr
+            target=forward_stderr,
             daemon=True
         )
-
-        stdout_thread.start()
         stderr_thread.start()
 
-        # Forward stdin to Blender
-        try:
-            for line in sys.stdin.buffer:
-                process.stdin.write(line)
-                process.stdin.flush()
-        except (BrokenPipeError, IOError):
-            pass
-
         # Wait for process to complete
-        process.wait()
-        sys.exit(process.returncode)
+        returncode = process.wait()
+
+        sys.stderr.write(f"[Wrapper] Blender exited with code {returncode}\n")
+        sys.stderr.flush()
+
+        sys.exit(returncode)
 
     except FileNotFoundError:
-        print(f"Error: Blender executable not found: {blender_exe}", file=sys.stderr)
+        sys.stderr.write(f"Error: Blender executable not found: {blender_exe}\n")
+        sys.stderr.flush()
         sys.exit(1)
     except Exception as e:
-        print(f"Error launching Blender: {e}", file=sys.stderr)
+        sys.stderr.write(f"Error launching Blender: {e}\n")
+        sys.stderr.flush()
         sys.exit(1)
 
 if __name__ == "__main__":
