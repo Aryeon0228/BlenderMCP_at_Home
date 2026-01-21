@@ -4,10 +4,26 @@ Blender MCP Server
 A Model Context Protocol server for controlling Blender 3D software.
 """
 
-import asyncio
-import json
+# CRITICAL: Redirect stdout IMMEDIATELY before any imports
+# This prevents Blender's C-level output from polluting the JSON-RPC channel
 import sys
 import os
+
+# Save the original stdout file descriptor BEFORE any other code runs
+_original_stdout_fd = os.dup(sys.stdout.fileno())
+
+# Redirect stdout to devnull at the OS level immediately
+if sys.platform == "win32":
+    _devnull_fd = os.open("nul", os.O_WRONLY)
+else:
+    _devnull_fd = os.open("/dev/null", os.O_WRONLY)
+
+os.dup2(_devnull_fd, sys.stdout.fileno())
+os.close(_devnull_fd)
+
+# Now we can import everything else
+import asyncio
+import json
 from typing import Any
 import logging
 import site
@@ -19,55 +35,22 @@ if user_site not in sys.path:
     sys.path.insert(0, user_site)
     print(f"Added user site-packages to path: {user_site}", file=sys.stderr)
 
-# Suppress Blender's stdout messages at the file descriptor level
-# This catches both Python and C-level output from Blender
-_original_stdout_fd = None
-_original_stderr_fd = None
-_saved_stdout_fd = None
-
-def suppress_blender_output():
-    """Suppress Blender's C-level stdout output during initialization."""
-    global _original_stdout_fd, _original_stderr_fd, _saved_stdout_fd
-
-    # Save original stdout file descriptor
-    _original_stdout_fd = sys.stdout.fileno()
-    _saved_stdout_fd = os.dup(_original_stdout_fd)
-
-    # Open devnull
-    if sys.platform == "win32":
-        devnull = os.open("nul", os.O_WRONLY)
-    else:
-        devnull = os.open("/dev/null", os.O_WRONLY)
-
-    # Redirect stdout to devnull at the OS level
-    os.dup2(devnull, _original_stdout_fd)
-    os.close(devnull)
-
-def restore_stdout():
-    """Restore original stdout after Blender initialization."""
-    global _saved_stdout_fd, _original_stdout_fd
-
-    if _saved_stdout_fd is not None and _original_stdout_fd is not None:
-        # Restore stdout
-        os.dup2(_saved_stdout_fd, _original_stdout_fd)
-        os.close(_saved_stdout_fd)
-
-        # Recreate sys.stdout with the restored file descriptor
-        sys.stdout = os.fdopen(_original_stdout_fd, 'w', buffering=1)
-
-# Suppress output before importing bpy
-suppress_blender_output()
-
+# Import bpy (Blender Python API)
 try:
     import bpy
     BLENDER_AVAILABLE = True
+    print("Blender Python API loaded successfully", file=sys.stderr)
 except ImportError:
     BLENDER_AVAILABLE = False
-    restore_stdout()
     print("Warning: bpy module not available. This script must be run from within Blender.", file=sys.stderr)
 
-# Restore stdout after bpy import
-restore_stdout()
+# Now restore stdout for MCP JSON-RPC communication
+os.dup2(_original_stdout_fd, sys.stdout.fileno())
+os.close(_original_stdout_fd)
+
+# Recreate sys.stdout with the restored file descriptor
+sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
+sys.stdout.flush()
 
 from mcp.server import Server
 from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
