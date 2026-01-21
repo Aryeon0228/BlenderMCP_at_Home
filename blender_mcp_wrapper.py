@@ -12,20 +12,29 @@ import select
 
 def filter_output(pipe, target_stream):
     """Filter Blender's output and only forward valid JSON-RPC lines."""
-    buffer = b''
-
     for line in iter(pipe.readline, b''):
         if not line:
             break
 
         try:
-            # Accumulate data
-            buffer += line
-
             # Try to decode
             decoded = line.decode('utf-8', errors='ignore').strip()
 
-            # Skip Blender's startup messages that aren't JSON
+            # If empty line, skip it
+            if not decoded:
+                continue
+
+            # PRIORITY: Pass through anything that looks like JSON
+            # JSON-RPC messages start with { and are on a single line
+            if decoded.startswith('{'):
+                # This is definitely JSON-RPC, pass it through immediately
+                sys.stderr.write(f"[Wrapper] Passing JSON: {decoded[:100]}...\n")
+                sys.stderr.flush()
+                target_stream.buffer.write(line)
+                target_stream.buffer.flush()
+                continue
+
+            # Skip Blender's startup messages
             skip_patterns = [
                 'Blender',
                 'Read blend:',
@@ -41,14 +50,13 @@ def filter_output(pipe, target_stream):
             # Check if this line should be skipped
             should_skip = any(pattern in decoded for pattern in skip_patterns)
 
-            # Only pass through valid JSON-RPC messages
-            if decoded.startswith('{') or decoded.startswith('['):
-                # This looks like JSON, pass it through
-                target_stream.buffer.write(line)
-                target_stream.buffer.flush()
-            elif not should_skip and decoded and not decoded.startswith('['):
-                # Unknown line that might be important - log to stderr instead
+            if should_skip:
+                # Log what we're filtering
                 sys.stderr.write(f"[Wrapper] Filtered: {decoded}\n")
+                sys.stderr.flush()
+            else:
+                # Unknown content - log it but don't pass through
+                sys.stderr.write(f"[Wrapper] Unknown (not forwarded): {decoded}\n")
                 sys.stderr.flush()
 
         except Exception as e:
