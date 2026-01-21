@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "blender": {
+      "command": "C:\\Program Files\\Blender Foundation\\Blender 5.0\\blender.exe",
+      "args": [
+        "--background",
+        "--python",
+        "C:\\Users\\YourUserName\\BlenderMCP_at_Home\\blender_mcp_server.py"
+      ],
+      "env": {}
+    }
+  }
+}
